@@ -1,0 +1,51 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: webvpn
+      MYSQL_USER: webvpn
+      MYSQL_PASSWORD: webvpn
+    ports:
+      - "3306:3306"
+    command: ["--default-authentication-plugin=mysql_native_password"]
+    volumes:
+      - db_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  web:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "mysql://webvpn:webvpn@db:3306/webvpn"
+      REDIS_URL: "redis://redis:6379"
+      # openssl rand -base64 32
+      AUTH_SECRET: "change-me"
+      AUTH_TRUST_HOST: "true"
+      AUTH_AUTHORIZATION_URL: "https://oauth.example.com/oauth/authorize"
+      AUTH_TOKEN_URL: "https://oauth.example.com/oauth/token"
+      AUTH_USERINFO_URL: "https://oauth.example.com/oauth/userinfo"
+      AUTH_CLIENT_ID: "client-id"
+      AUTH_CLIENT_SECRET: "client-secret"
+      AUTH_SCOPE: "openid profile email"
+      NEXTAUTH_URL: "http://localhost:3000"
+      AUTH_URL: "http://localhost:3000"
+      NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+      VPN_SERVER_URL: "http://localhost:3000"
+
+volumes:
+  db_data:
+  redis_data:
