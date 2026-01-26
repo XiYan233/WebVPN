@@ -1,8 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 export default function middleware(req: NextRequest) {
-  const appPath = req.nextUrl.pathname;
   const basePath = req.nextUrl.basePath || "/webvpn";
+  const pathname = req.nextUrl.pathname;
+  const appPath = pathname.startsWith(basePath)
+    ? pathname.slice(basePath.length) || "/"
+    : pathname;
+
+  if (pathname.startsWith("/webvpn-api") && !pathname.startsWith(`${basePath}/webvpn-api`)) {
+    const url = new URL(`${basePath}${pathname}`, req.url);
+    url.search = req.nextUrl.search;
+    return NextResponse.redirect(url);
+  }
+
   if (appPath === "/" && !req.nextUrl.basePath) {
     const url = new URL(basePath, req.url);
     return NextResponse.redirect(url);
@@ -43,23 +53,6 @@ export default function middleware(req: NextRequest) {
   const hasSessionCookie =
     req.cookies.get("authjs.session-token") ||
     req.cookies.get("__Secure-authjs.session-token");
-
-  if (appPath.startsWith(`/_next/`)) {
-    const referer = req.headers.get("referer");
-    const refererMatch = referer?.match(
-      new RegExp(`${basePath}/tunnel/([^/]+)(?:/|$)`)
-    );
-    const clientId = refererMatch?.[1];
-    if (clientId && hasSessionCookie) {
-      const rewriteUrl = new URL(
-        `${basePath}/tunnel/${clientId}${appPath}`,
-        req.url
-      );
-      rewriteUrl.search = req.nextUrl.search;
-      return setTunnelCookie(NextResponse.rewrite(rewriteUrl), clientId);
-    }
-    return setTunnelCookie(NextResponse.next(), clientId);
-  }
 
   if (appPath.startsWith("/_next/")) {
     const referer = req.headers.get("referer");
