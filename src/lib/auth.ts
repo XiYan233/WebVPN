@@ -31,7 +31,7 @@ const customOAuth: OAuthConfig<any> = {
 
 export const authConfig: NextAuthConfig = {
   adapter: PrismaAdapter(prisma),
-  basePath: "/webvpn/webvpn-api/auth",
+  basePath: "/webvpn-api/auth",
   providers: [
     customOAuth,
     Credentials({
