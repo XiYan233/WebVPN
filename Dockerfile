@@ -19,5 +19,6 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/public ./public
 COPY --from=build /app/server.js ./server.js
 COPY --from=build /app/src ./src
+COPY --from=build /app/prisma ./prisma
 EXPOSE 3000
 CMD ["node", "server.js"]
