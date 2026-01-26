@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
-export default function middleware(req: Request & { nextUrl: URL; cookies: any }) {
+export default function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const basePath = req.nextUrl.basePath || "/webvpn";
   if (pathname === "/" && !req.nextUrl.basePath) {
@@ -46,7 +46,7 @@ export default function middleware(req: Request & { nextUrl: URL; cookies: any }
     req.cookies.get("authjs.session-token") ||
     req.cookies.get("__Secure-authjs.session-token");
 
-  if (pathname.startsWith(`${basePath}/_next/`)) {
+  if (pathname.startsWith(`/_next/`)) {
     const referer = req.headers.get("referer");
     const refererMatch = referer?.match(
       new RegExp(`${basePath}/tunnel/([^/]+)(?:/|$)`)
