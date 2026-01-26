@@ -120,7 +120,7 @@ export default function ClientStatusTable({
     let active = true;
     const fetchStatus = async () => {
       try {
-        const res = await fetch("/api/clients/status", { cache: "no-store" });
+        const res = await fetch("/webvpn-api/clients/status", { cache: "no-store" });
         if (!res.ok) return;
         const data = await res.json();
         if (!active || !Array.isArray(data?.clients)) return;
@@ -207,3 +207,4 @@ export default function ClientStatusTable({
     </Table>
   );
 }
+

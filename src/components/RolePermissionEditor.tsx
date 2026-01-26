@@ -28,7 +28,7 @@ export default function RolePermissionEditor({
 
   const save = async () => {
     setSaving(true);
-    await fetch(`/api/admin/roles/${roleId}/permissions`, {
+    await fetch(`/webvpn-api/admin/roles/${roleId}/permissions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ permissionIds: selected }),
@@ -56,3 +56,4 @@ export default function RolePermissionEditor({
     </div>
   );
 }
+

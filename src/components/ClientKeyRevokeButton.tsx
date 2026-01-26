@@ -18,7 +18,7 @@ export default function ClientKeyRevokeButton({
 
   const revoke = async () => {
     setSaving(true);
-    await fetch(`/api/clients/${clientId}/key/${keyId}`, {
+    await fetch(`/webvpn-api/clients/${clientId}/key/${keyId}`, {
       method: "PATCH",
     });
     setSaving(false);
@@ -37,3 +37,4 @@ export default function ClientKeyRevokeButton({
     </Button>
   );
 }
+

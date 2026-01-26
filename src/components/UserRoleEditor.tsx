@@ -26,7 +26,7 @@ export default function UserRoleEditor({
 
   const save = async () => {
     setSaving(true);
-    await fetch(`/api/admin/users/${userId}/roles`, {
+    await fetch(`/webvpn-api/admin/users/${userId}/roles`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roleIds: selected }),
@@ -54,3 +54,4 @@ export default function UserRoleEditor({
     </div>
   );
 }
+

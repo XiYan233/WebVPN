@@ -17,7 +17,7 @@ export default function ClientKeyGenerator({ clientId }: { clientId: string }) {
   const generate = async () => {
     setLoading(true);
     setKey(null);
-    const res = await fetch(`/api/clients/${clientId}/key`, {
+    const res = await fetch(`/webvpn-api/clients/${clientId}/key`, {
       method: "POST",
     });
     const data = await res.json();
@@ -44,3 +44,4 @@ export default function ClientKeyGenerator({ clientId }: { clientId: string }) {
     </div>
   );
 }
+

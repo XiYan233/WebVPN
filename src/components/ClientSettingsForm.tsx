@@ -33,7 +33,7 @@ export default function ClientSettingsForm({
 
   const update = async () => {
     setSaving(true);
-    await fetch(`/api/clients/${clientId}`, {
+    await fetch(`/webvpn-api/clients/${clientId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -101,3 +101,4 @@ export default function ClientSettingsForm({
     </div>
   );
 }
+

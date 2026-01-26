@@ -123,7 +123,7 @@ export default async function LogsPage({
   if (resolvedSearchParams.to) {
     exportParams.set("to", resolvedSearchParams.to);
   }
-  const exportUrl = `/api/logs/export?${exportParams.toString()}`;
+  const exportUrl = `/webvpn-api/logs/export?${exportParams.toString()}`;
 
   const buildPageUrl = (nextPage: number) => {
     const params = new URLSearchParams(exportParams);
@@ -251,3 +251,4 @@ export default async function LogsPage({
     </Card>
   );
 }
+

@@ -18,7 +18,7 @@ export default function UserAdminActions({
 
   const updateStatus = async (nextStatus: boolean) => {
     setSaving(true);
-    await fetch(`/api/admin/users/${userId}`, {
+    await fetch(`/webvpn-api/admin/users/${userId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive: nextStatus }),
@@ -30,7 +30,7 @@ export default function UserAdminActions({
   const resetPassword = async () => {
     if (!password.trim()) return;
     setSaving(true);
-    await fetch(`/api/admin/users/${userId}`, {
+    await fetch(`/webvpn-api/admin/users/${userId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -71,3 +71,4 @@ export default function UserAdminActions({
     </div>
   );
 }
+
