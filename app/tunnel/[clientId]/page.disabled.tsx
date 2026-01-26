@@ -8,3 +8,4 @@ export default async function ClientTunnelPage({
   const { clientId } = await params;
   redirect(`/tunnel/${clientId}/`);
 }
+

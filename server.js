@@ -9,6 +9,11 @@ const port = process.env.PORT || 3000;
 
 app.prepare().then(() => {
   const server = createServer((req, res) => {
+    if (req.url === "/" || req.url?.startsWith("/?")) {
+      res.writeHead(302, { Location: "/webvpn" });
+      res.end();
+      return;
+    }
     handle(req, res);
   });
 

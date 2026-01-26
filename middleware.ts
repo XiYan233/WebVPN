@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 
 export default function middleware(req: Request & { nextUrl: URL; cookies: any }) {
   const { pathname } = req.nextUrl;
-  const tunnelMatch = pathname.match(/^\/tunnel\/([^/]+)(?:\/|$)/);
+  const basePath = req.nextUrl.basePath || "/webvpn";
+  if (pathname === "/" && !req.nextUrl.basePath) {
+    const url = new URL(basePath, req.url);
+    return NextResponse.redirect(url);
+  }
+  const tunnelMatch = pathname.match(
+    new RegExp(`^${basePath}/tunnel/([^/]+)(?:/|$)`)
+  );
   if (tunnelMatch) {
     const response = NextResponse.next();
     response.cookies.set("webvpn_tunnel", tunnelMatch[1], {
@@ -24,43 +31,75 @@ export default function middleware(req: Request & { nextUrl: URL; cookies: any }
   };
 
   const isWebVpnPath =
-    pathname.startsWith("/clients") ||
-    pathname.startsWith("/admin") ||
-    pathname.startsWith("/logs") ||
-    pathname.startsWith("/tunnel") ||
-    pathname.startsWith("/webvpn-api/clients") ||
-    pathname.startsWith("/webvpn-api/admin") ||
-    pathname.startsWith("/webvpn-api/auth") ||
-    pathname.startsWith("/webvpn-api/logs") ||
-    pathname.startsWith("/unauthorized");
+    pathname.startsWith(`${basePath}/clients`) ||
+    pathname.startsWith(`${basePath}/admin`) ||
+    pathname.startsWith(`${basePath}/logs`) ||
+    pathname.startsWith(`${basePath}/tunnel`) ||
+    pathname.startsWith(`${basePath}/webvpn-api/clients`) ||
+    pathname.startsWith(`${basePath}/webvpn-api/admin`) ||
+    pathname.startsWith(`${basePath}/webvpn-api/auth`) ||
+    pathname.startsWith(`${basePath}/webvpn-api/logs`) ||
+    pathname === basePath ||
+    pathname.startsWith(`${basePath}/unauthorized`);
 
   const hasSessionCookie =
     req.cookies.get("authjs.session-token") ||
     req.cookies.get("__Secure-authjs.session-token");
 
-  if (pathname.startsWith("/_next/")) {
+  if (pathname.startsWith(`${basePath}/_next/`)) {
     const referer = req.headers.get("referer");
-    const refererMatch = referer?.match(/\/tunnel\/([^/]+)(?:\/|$)/);
+    const refererMatch = referer?.match(
+      new RegExp(`${basePath}/tunnel/([^/]+)(?:/|$)`)
+    );
     const clientId = refererMatch?.[1];
     if (clientId && hasSessionCookie) {
-      const rewriteUrl = new URL(`/tunnel/${clientId}${pathname}`, req.url);
+      const rewritePath = pathname.slice(basePath.length);
+      const rewriteUrl = new URL(
+        `${basePath}/tunnel/${clientId}${rewritePath}`,
+        req.url
+      );
       rewriteUrl.search = req.nextUrl.search;
       return setTunnelCookie(NextResponse.rewrite(rewriteUrl), clientId);
     }
     return setTunnelCookie(NextResponse.next(), clientId);
   }
 
+  if (pathname.startsWith("/_next/")) {
+    const referer = req.headers.get("referer");
+    const refererMatch = referer?.match(
+      new RegExp(`${basePath}/tunnel/([^/]+)(?:/|$)`)
+    );
+    const clientId = refererMatch?.[1] ?? req.cookies.get("webvpn_tunnel")?.value;
+    if (clientId && hasSessionCookie) {
+      const rewriteUrl = new URL(
+        `${basePath}/tunnel/${clientId}${pathname}`,
+        req.url
+      );
+      rewriteUrl.search = req.nextUrl.search;
+      return setTunnelCookie(NextResponse.rewrite(rewriteUrl), clientId);
+    }
+    return NextResponse.next();
+  }
+
   if (
     !isWebVpnPath &&
-    !pathname.startsWith("/unauthorized") &&
-    !pathname.startsWith("/webvpn-api/auth/callback")
+    !pathname.startsWith(`${basePath}/unauthorized`) &&
+    !pathname.startsWith(`${basePath}/webvpn-api/auth/callback`)
   ) {
     const referer = req.headers.get("referer");
-    const refererMatch = referer?.match(/\/tunnel\/([^/]+)(?:\/|$)/);
+    const refererMatch = referer?.match(
+      new RegExp(`${basePath}/tunnel/([^/]+)(?:/|$)`)
+    );
     const cookieClientId = req.cookies.get("webvpn_tunnel")?.value;
     const clientId = refererMatch?.[1] ?? cookieClientId;
     if (clientId && hasSessionCookie) {
-      const rewriteUrl = new URL(`/tunnel/${clientId}${pathname}`, req.url);
+      const rewritePath = pathname.startsWith(basePath)
+        ? pathname.slice(basePath.length)
+        : pathname;
+      const rewriteUrl = new URL(
+        `${basePath}/tunnel/${clientId}${rewritePath}`,
+        req.url
+      );
       rewriteUrl.search = req.nextUrl.search;
       return setTunnelCookie(NextResponse.rewrite(rewriteUrl), clientId);
     }
@@ -69,12 +108,12 @@ export default function middleware(req: Request & { nextUrl: URL; cookies: any }
     }
   }
   const protectedPrefixes = [
-    "/clients",
-    "/admin",
-    "/logs",
-    "/tunnel",
-    "/webvpn-api/clients",
-    "/webvpn-api/admin",
+    `${basePath}/clients`,
+    `${basePath}/admin`,
+    `${basePath}/logs`,
+    `${basePath}/tunnel`,
+    `${basePath}/webvpn-api/clients`,
+    `${basePath}/webvpn-api/admin`,
   ];
 
   const requiresAuth = protectedPrefixes.some((prefix) =>
@@ -83,7 +122,7 @@ export default function middleware(req: Request & { nextUrl: URL; cookies: any }
 
   if (requiresAuth) {
     if (!hasSessionCookie) {
-      const url = new URL("/", req.url);
+      const url = new URL(`${basePath}/`, req.url);
       return NextResponse.redirect(url);
     }
   }
@@ -92,5 +131,5 @@ export default function middleware(req: Request & { nextUrl: URL; cookies: any }
 }
 
 export const config = {
-  matcher: ["/((?!webvpn-api/auth|favicon.ico|ws).*)"],
+  matcher: ["/", "/((?!webvpn/webvpn-api/auth|favicon.ico|ws).*)"],
 };
