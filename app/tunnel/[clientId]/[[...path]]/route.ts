@@ -4,6 +4,117 @@ import { redis } from "@/lib/redis";
 import { requireSession } from "@/lib/rbac";
 import { createProxyRequest } from "@/lib/tunnelRegistry";
 
+type UpstreamHeaders = Record<string, string | string[] | number | undefined>;
+
+function normalizeBasePath(value: string | null | undefined) {
+  if (!value) return "";
+  let basePath = value.trim();
+  if (!basePath) return "";
+  if (!basePath.startsWith("/")) basePath = `/${basePath}`;
+  if (basePath !== "/" && basePath.endsWith("/")) {
+    basePath = basePath.slice(0, -1);
+  }
+  return basePath === "/" ? "" : basePath;
+}
+
+function escapeHtmlAttr(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function injectBaseAndServiceWorker(html: string, options: {
+  baseHref: string;
+  clientId: string;
+  basePath: string;
+}) {
+  if (html.includes("data-webvpn-base") || html.includes("data-webvpn-sw")) {
+    return html;
+  }
+
+  const baseTag = `<base data-webvpn-base href="${escapeHtmlAttr(
+    options.baseHref
+  )}">`;
+
+  const swUrl = `${options.basePath}/webvpn-sw.js` || "/webvpn-sw.js";
+  const swScope = options.basePath ? `${options.basePath}/` : "/";
+
+  const script = [
+    '<script data-webvpn-sw>',
+    "(() => {",
+    "  if (!('serviceWorker' in navigator)) return;",
+    `  const clientId = ${JSON.stringify(options.clientId)};`,
+    `  const basePath = ${JSON.stringify(options.basePath)};`,
+    `  const swUrl = ${JSON.stringify(swUrl)};`,
+    `  const swScope = ${JSON.stringify(swScope)};`,
+    "  const notify = (sw) => {",
+    "    try { sw?.postMessage?.({ type: 'WEBVPN_SET_CLIENT', clientId, basePath }); } catch {}",
+    "  };",
+    "  navigator.serviceWorker.register(swUrl, { scope: swScope })",
+    "    .then((reg) => {",
+    "      notify(reg.active || navigator.serviceWorker.controller);",
+    "      navigator.serviceWorker.addEventListener('controllerchange', () => {",
+    "        notify(navigator.serviceWorker.controller);",
+    "      });",
+    "    })",
+    "    .catch(() => {});",
+    "})();",
+    "</script>",
+  ].join("");
+
+  const injection = `${baseTag}${script}`;
+  const headMatch = html.match(/<head[^>]*>/i);
+  if (headMatch && headMatch.index !== undefined) {
+    const insertAt = headMatch.index + headMatch[0].length;
+    return `${html.slice(0, insertAt)}${injection}${html.slice(insertAt)}`;
+  }
+  return `${injection}${html}`;
+}
+
+function getHeaderValue(headers: UpstreamHeaders, name: string) {
+  const lower = name.toLowerCase();
+  const value = headers[name] ?? headers[lower];
+  if (Array.isArray(value)) return value[0];
+  if (value === undefined || value === null) return undefined;
+  return String(value);
+}
+
+function getSetCookieValues(headers: UpstreamHeaders) {
+  const raw = headers["set-cookie"] ?? headers["Set-Cookie"];
+  if (!raw) return [] as string[];
+  if (Array.isArray(raw)) return raw.filter(Boolean) as string[];
+  return [String(raw)];
+}
+
+function rewriteSetCookie(cookie: string, tunnelBasePath: string) {
+  const segments = cookie
+    .split(";")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return cookie;
+
+  const [nameValue, ...attrs] = segments;
+  let hasPath = false;
+  const rewrittenAttrs: string[] = [];
+
+  for (const attr of attrs) {
+    const lower = attr.toLowerCase();
+    if (lower.startsWith("path=")) {
+      rewrittenAttrs.push(`Path=${tunnelBasePath}`);
+      hasPath = true;
+      continue;
+    }
+    if (lower.startsWith("domain=")) {
+      continue;
+    }
+    rewrittenAttrs.push(attr);
+  }
+
+  if (!hasPath) {
+    rewrittenAttrs.unshift(`Path=${tunnelBasePath}`);
+  }
+
+  return [nameValue, ...rewrittenAttrs].join("; ");
+}
+
 async function canAccess(clientId: string, userId: string, isAdmin: boolean) {
   if (isAdmin) return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
@@ -50,6 +161,11 @@ async function handleProxy(
   const body = Buffer.from(rawBody).toString("base64");
   const url = new URL(req.url);
   const path = `/${pathParts?.join("/") ?? ""}${url.search}`;
+  const basePath = normalizeBasePath(
+    req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
+  );
+  const tunnelBasePath = `${basePath}/tunnel/${clientId}`;
+  const tunnelBaseHref = `${tunnelBasePath}/`;
 
   let response;
   try {
@@ -111,13 +227,50 @@ async function handleProxy(
     86400
   );
 
-  const headers = new Headers(response.headers ?? {});
-  headers.delete("content-length");
+  const upstreamHeaders = (response.headers ?? {}) as UpstreamHeaders;
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(upstreamHeaders)) {
+    if (value === undefined || value === null) continue;
+    const lowerKey = key.toLowerCase();
+    if (lowerKey === "set-cookie" || lowerKey === "content-length") {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (item !== undefined && item !== null) {
+          headers.append(key, String(item));
+        }
+      }
+      continue;
+    }
+    headers.append(key, String(value));
+  }
 
-  return new NextResponse(responseBody, {
+  const contentType = getHeaderValue(upstreamHeaders, "content-type") ?? "";
+  const upstreamSetCookies = getSetCookieValues(upstreamHeaders);
+
+  let finalBody = responseBody;
+  if (contentType.includes("text/html") && responseBody.length > 0) {
+    const html = responseBody.toString("utf-8");
+    const injectedHtml = injectBaseAndServiceWorker(html, {
+      baseHref: tunnelBaseHref,
+      clientId,
+      basePath,
+    });
+    finalBody = Buffer.from(injectedHtml, "utf-8");
+  }
+
+  const nextResponse = new NextResponse(finalBody, {
     status: response.status ?? 200,
     headers,
   });
+
+  for (const cookie of upstreamSetCookies) {
+    const rewritten = rewriteSetCookie(cookie, tunnelBasePath);
+    nextResponse.headers.append("set-cookie", rewritten);
+  }
+
+  return nextResponse;
 }
 
 export const GET = handleProxy;

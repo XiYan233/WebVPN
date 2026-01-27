@@ -11,8 +11,16 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams?: Promise<{ from?: string }>;
+}) {
   const session = await auth();
+  const resolvedSearchParams = await searchParams;
+  const fromParam = resolvedSearchParams?.from;
+  const redirectTo =
+    fromParam && fromParam.startsWith("/") ? fromParam : "/clients";
 
   return (
     <main className="page-shell">
@@ -37,7 +45,7 @@ export default async function Home() {
                   <form
                     action={async () => {
                       "use server";
-                      await signIn("custom");
+                      await signIn("custom", { redirectTo });
                     }}
                   >
                     <Button type="submit" size="lg" variant="secondary">
@@ -50,7 +58,7 @@ export default async function Home() {
                   <form
                     action={async () => {
                       "use server";
-                      await signIn("custom");
+                      await signIn("custom", { redirectTo });
                     }}
                   >
                     <Button type="submit" size="lg">
@@ -80,7 +88,7 @@ export default async function Home() {
                   await signIn("credentials", {
                     email,
                     password,
-                    redirectTo: "/clients",
+                    redirectTo,
                   });
                 }}
               >

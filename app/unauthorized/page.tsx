@@ -7,6 +7,9 @@ export default async function UnauthorizedPage({
 }) {
   const resolvedSearchParams = await searchParams;
   const from = resolvedSearchParams?.from;
+  const homeHref = from
+    ? `/?from=${encodeURIComponent(from)}`
+    : "/";
 
   return (
     <main className="page-shell flex items-center justify-center px-6 py-16">
@@ -27,7 +30,7 @@ export default async function UnauthorizedPage({
         ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            href="/"
+            href={homeHref}
             className="inline-flex items-center justify-center rounded-full bg-primary px-5 py-2 text-sm font-medium text-primary-foreground shadow-sm transition hover:opacity-90"
           >
             返回首页
