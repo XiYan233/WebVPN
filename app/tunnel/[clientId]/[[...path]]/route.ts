@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  brotliDecompressSync,
+  gunzipSync,
+  inflateSync,
+} from "node:zlib";
 import { prisma } from "@/lib/db";
 import { redis } from "@/lib/redis";
 import { requireSession } from "@/lib/rbac";
@@ -115,6 +120,27 @@ function rewriteSetCookie(cookie: string, tunnelBasePath: string) {
   return [nameValue, ...rewrittenAttrs].join("; ");
 }
 
+function decodeHtmlBody(body: Buffer, contentEncoding: string | undefined) {
+  if (!contentEncoding) {
+    return { body, decoded: false };
+  }
+  const encoding = contentEncoding.toLowerCase();
+  try {
+    if (encoding === "gzip") {
+      return { body: gunzipSync(body), decoded: true };
+    }
+    if (encoding === "deflate") {
+      return { body: inflateSync(body), decoded: true };
+    }
+    if (encoding === "br") {
+      return { body: brotliDecompressSync(body), decoded: true };
+    }
+  } catch {
+    return { body, decoded: false };
+  }
+  return { body, decoded: false };
+}
+
 async function canAccess(clientId: string, userId: string, isAdmin: boolean) {
   if (isAdmin) return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
@@ -228,11 +254,35 @@ async function handleProxy(
   );
 
   const upstreamHeaders = (response.headers ?? {}) as UpstreamHeaders;
+  const contentType = getHeaderValue(upstreamHeaders, "content-type") ?? "";
+  const contentEncoding = getHeaderValue(upstreamHeaders, "content-encoding");
+  const upstreamSetCookies = getSetCookieValues(upstreamHeaders);
+
+  let finalBody = responseBody;
+  let dropContentEncoding = false;
+  if (contentType.includes("text/html") && responseBody.length > 0) {
+    const decoded = decodeHtmlBody(responseBody, contentEncoding);
+    dropContentEncoding = decoded.decoded;
+    const html = decoded.body.toString("utf-8");
+    const injectedHtml = injectBaseAndServiceWorker(html, {
+      baseHref: tunnelBaseHref,
+      clientId,
+      basePath,
+    });
+    finalBody = Buffer.from(injectedHtml, "utf-8");
+  }
+
   const headers = new Headers();
   for (const [key, value] of Object.entries(upstreamHeaders)) {
     if (value === undefined || value === null) continue;
     const lowerKey = key.toLowerCase();
-    if (lowerKey === "set-cookie" || lowerKey === "content-length") {
+    if (
+      lowerKey === "set-cookie" ||
+      lowerKey === "content-length" ||
+      lowerKey === "content-security-policy" ||
+      lowerKey === "content-security-policy-report-only" ||
+      (dropContentEncoding && lowerKey === "content-encoding")
+    ) {
       continue;
     }
     if (Array.isArray(value)) {
@@ -244,20 +294,6 @@ async function handleProxy(
       continue;
     }
     headers.append(key, String(value));
-  }
-
-  const contentType = getHeaderValue(upstreamHeaders, "content-type") ?? "";
-  const upstreamSetCookies = getSetCookieValues(upstreamHeaders);
-
-  let finalBody = responseBody;
-  if (contentType.includes("text/html") && responseBody.length > 0) {
-    const html = responseBody.toString("utf-8");
-    const injectedHtml = injectBaseAndServiceWorker(html, {
-      baseHref: tunnelBaseHref,
-      clientId,
-      basePath,
-    });
-    finalBody = Buffer.from(injectedHtml, "utf-8");
   }
 
   const nextResponse = new NextResponse(finalBody, {

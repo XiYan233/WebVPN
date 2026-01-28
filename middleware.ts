@@ -19,6 +19,7 @@ export default function middleware(req: NextRequest) {
     path.startsWith("/webvpn-api/admin") ||
     path.startsWith("/webvpn-api/auth") ||
     path.startsWith("/webvpn-api/logs") ||
+    path === "/webvpn-sw.js" ||
     path === "/" ||
     path.startsWith("/unauthorized");
 
