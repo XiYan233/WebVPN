@@ -14,9 +14,10 @@ import ClientStatusTable from "@/components/ClientStatusTable";
 
 export default async function ClientsPage() {
   const session = await auth();
-  const isAdmin = session?.user?.permissions?.includes("admin.users");
-  const canViewAll = isAdmin;
-  const canManageClients = isAdmin;
+  const isAdmin = session?.user?.permissions?.includes("admin.users") ?? false;
+  const canManageClients =
+    isAdmin || (session?.user?.permissions?.includes("clients.manage") ?? false);
+  const canViewAll = canManageClients;
 
   const clients = await prisma.client.findMany({
     where: canViewAll ? {} : { ownerId: session?.user?.id },
@@ -79,7 +80,11 @@ export default async function ClientsPage() {
                 const description = formData.get("description")?.toString() ?? "";
 
                 if (!name || !targetPort) return;
-                if (!currentSession?.user?.permissions?.includes("admin.users")) return;
+                const userId = currentSession?.user?.id;
+                const canManage =
+                  currentSession?.user?.permissions?.includes("clients.manage") ||
+                  currentSession?.user?.permissions?.includes("admin.users");
+                if (!canManage || !userId) return;
 
                 await prisma.client.create({
                   data: {
@@ -87,7 +92,7 @@ export default async function ClientsPage() {
                     targetPort,
                     basePath,
                     description,
-                    ownerId: currentSession.user.id,
+                    ownerId: userId,
                   },
                 });
               }}
@@ -123,7 +128,7 @@ export default async function ClientsPage() {
           <ClientStatusTable
             clients={clientRows}
             initialStatus={initialStatus}
-            isAdmin={isAdmin}
+            isAdmin={canManageClients}
           />
         </CardContent>
       </Card>

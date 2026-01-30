@@ -87,13 +87,18 @@ self.addEventListener("fetch", (event) => {
 
   const directClientId = extractClientIdFromPath(requestUrl.pathname, basePath);
   const referrerClientId = getClientIdFromReferrer(event.request.referrer, basePath);
+  const isFromTunnel = Boolean(referrerClientId);
   const clientId = directClientId || referrerClientId || state.activeClientId;
 
   if (!clientId) {
     return;
   }
 
-  if (isWebVpnPath(appPath)) {
+  if (appPath.startsWith("/tunnel/")) {
+    return;
+  }
+
+  if (isWebVpnPath(appPath) && !(isFromTunnel && appPath.startsWith("/webvpn-api"))) {
     return;
   }
 

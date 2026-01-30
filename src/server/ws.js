@@ -48,9 +48,9 @@ async function hasPermission(userId, permissionKey) {
   );
 }
 
-async function getStatusSnapshot({ userId, isAdmin }) {
+async function getStatusSnapshot({ userId, canViewAll }) {
   const clients = await prisma.client.findMany({
-    where: isAdmin ? {} : { ownerId: userId },
+    where: canViewAll ? {} : { ownerId: userId },
     orderBy: { createdAt: "desc" },
   });
 
@@ -223,7 +223,9 @@ function attachWebSocketServer(server) {
       }
 
       const isAdmin = await hasPermission(session.userId, "admin.users");
-      const connection = { ws, userId: session.userId, isAdmin };
+      const canManageClients = await hasPermission(session.userId, "clients.manage");
+      const canViewAll = isAdmin || canManageClients;
+      const connection = { ws, userId: session.userId, canViewAll };
       statusConnections.add(connection);
 
       const snapshot = await getStatusSnapshot(connection);
@@ -231,8 +233,8 @@ function attachWebSocketServer(server) {
         "[ws:status] send snapshot",
         "user=",
         session.userId,
-        "admin=",
-        isAdmin,
+        "viewAll=",
+        canViewAll,
         "count=",
         snapshot.length
       );

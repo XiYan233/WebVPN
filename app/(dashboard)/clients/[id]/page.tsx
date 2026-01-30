@@ -41,8 +41,10 @@ export default async function ClientDetailPage({
     return <Card className="p-6">客户端不存在</Card>;
   }
 
-  const isAdmin = session.user.permissions?.includes("admin.users");
-  if (!isAdmin) {
+  const canManageClients =
+    session.user.permissions?.includes("clients.manage") ||
+    session.user.permissions?.includes("admin.users");
+  if (!canManageClients) {
     return <Card className="p-6">无权限访问</Card>;
   }
 

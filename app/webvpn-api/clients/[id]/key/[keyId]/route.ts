@@ -20,8 +20,10 @@ export async function PATCH(
     return NextResponse.json({ error: "Client not found" }, { status: 404 });
   }
 
-  const isAdmin = session.user?.permissions?.includes("admin.users") ?? false;
-  if (!isAdmin && client.ownerId !== session.user?.id) {
+  const canManageAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
+  if (!canManageAll && client.ownerId !== session.user?.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

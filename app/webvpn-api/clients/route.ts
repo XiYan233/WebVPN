@@ -8,7 +8,9 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const canViewAll = session.user?.permissions?.includes("admin.users");
+  const canViewAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
 
   const clients = await prisma.client.findMany({
     where: canViewAll ? {} : { ownerId: session.user?.id },

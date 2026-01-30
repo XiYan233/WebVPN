@@ -11,6 +11,12 @@ import { createProxyRequest } from "@/lib/tunnelRegistry";
 
 type UpstreamHeaders = Record<string, string | string[] | number | undefined>;
 
+const WEBVPN_COOKIE_PREFIXES = ["webvpn.", "__Secure-webvpn."];
+const WEBVPN_COOKIE_NAMES = new Set([
+  "webvpn_tunnel",
+  "webvpn_tunnel_assets",
+]);
+
 function normalizeBasePath(value: string | null | undefined) {
   if (!value) return "";
   let basePath = value.trim();
@@ -87,6 +93,21 @@ function getSetCookieValues(headers: UpstreamHeaders) {
   if (!raw) return [] as string[];
   if (Array.isArray(raw)) return raw.filter(Boolean) as string[];
   return [String(raw)];
+}
+
+function stripWebvpnCookies(cookieHeader: string | null) {
+  if (!cookieHeader) return undefined;
+  const filtered = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const name = part.split("=")[0]?.trim();
+      if (!name) return false;
+      if (WEBVPN_COOKIE_NAMES.has(name)) return false;
+      return !WEBVPN_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix));
+    });
+  return filtered.length ? filtered.join("; ") : undefined;
 }
 
 function rewriteSetCookie(cookie: string, tunnelBasePath: string) {
@@ -166,8 +187,12 @@ function looksLikeHtml(contentType: string, body: Buffer) {
   return false;
 }
 
-async function canAccess(clientId: string, userId: string, isAdmin: boolean) {
-  if (isAdmin) return true;
+async function canAccess(
+  clientId: string,
+  userId: string,
+  canViewAll: boolean
+) {
+  if (canViewAll) return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   return client?.ownerId === userId;
 }
@@ -193,9 +218,11 @@ async function handleProxy(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const isAdmin = session.user?.permissions?.includes("admin.users") ?? false;
+  const canViewAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
   const userId = session.user?.id ?? "";
-  const allowed = await canAccess(clientId, userId, isAdmin);
+  const allowed = await canAccess(clientId, userId, Boolean(canViewAll));
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -239,6 +266,14 @@ async function handleProxy(
         whitelist.has(key.toLowerCase())
       )
     );
+    if ("cookie" in forwardHeaders) {
+      const filteredCookie = stripWebvpnCookies(req.headers.get("cookie"));
+      if (filteredCookie) {
+        forwardHeaders.cookie = filteredCookie;
+      } else {
+        delete forwardHeaders.cookie;
+      }
+    }
 
     response = await createProxyRequest(
       clientId,

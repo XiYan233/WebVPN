@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-export default function middleware(req: NextRequest) {
+export default function proxy(req: NextRequest) {
   const basePath = req.nextUrl.basePath ?? "";
   const hasBasePath = basePath.length > 0;
   const pathname = req.nextUrl.pathname;

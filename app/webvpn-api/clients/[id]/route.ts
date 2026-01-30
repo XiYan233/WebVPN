@@ -2,8 +2,12 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { requireSession, requirePermission } from "@/lib/rbac";
 
-async function canAccessClient(clientId: string, userId: string, isAdmin: boolean) {
-  if (isAdmin) return true;
+async function canAccessClient(
+  clientId: string,
+  userId: string,
+  canViewAll: boolean
+) {
+  if (canViewAll) return true;
   const client = await prisma.client.findUnique({ where: { id: clientId } });
   return client?.ownerId === userId;
 }
@@ -18,11 +22,13 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const isAdmin = session.user?.permissions?.includes("admin.users") ?? false;
+  const canViewAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
   const allowed = await canAccessClient(
     resolvedParams.id,
     session.user?.id ?? "",
-    isAdmin
+    Boolean(canViewAll)
   );
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -46,11 +52,13 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const isAdmin = session.user?.permissions?.includes("admin.users") ?? false;
+  const canViewAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
   const allowed = await canAccessClient(
     resolvedParams.id,
     session.user?.id ?? "",
-    isAdmin
+    Boolean(canViewAll)
   );
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -83,11 +91,13 @@ export async function DELETE(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const isAdmin = session.user?.permissions?.includes("admin.users") ?? false;
+  const canViewAll =
+    session.user?.permissions?.includes("admin.users") ||
+    session.user?.permissions?.includes("clients.manage");
   const allowed = await canAccessClient(
     resolvedParams.id,
     session.user?.id ?? "",
-    isAdmin
+    Boolean(canViewAll)
   );
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
