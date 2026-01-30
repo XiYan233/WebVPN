@@ -122,23 +122,48 @@ function rewriteSetCookie(cookie: string, tunnelBasePath: string) {
 
 function decodeHtmlBody(body: Buffer, contentEncoding: string | undefined) {
   if (!contentEncoding) {
-    return { body, decoded: false };
+    return { body, decoded: false, encoding: "" };
   }
-  const encoding = contentEncoding.toLowerCase();
+  const encoding = contentEncoding
+    .toLowerCase()
+    .split(",")
+    .map((value) => value.trim())
+    .find(Boolean);
+  if (!encoding) {
+    return { body, decoded: false, encoding: "" };
+  }
   try {
     if (encoding === "gzip") {
-      return { body: gunzipSync(body), decoded: true };
+      return { body: gunzipSync(body), decoded: true, encoding };
     }
     if (encoding === "deflate") {
-      return { body: inflateSync(body), decoded: true };
+      return { body: inflateSync(body), decoded: true, encoding };
     }
     if (encoding === "br") {
-      return { body: brotliDecompressSync(body), decoded: true };
+      return { body: brotliDecompressSync(body), decoded: true, encoding };
     }
   } catch {
-    return { body, decoded: false };
+    return { body, decoded: false, encoding };
   }
-  return { body, decoded: false };
+  return { body, decoded: false, encoding };
+}
+
+function looksLikeHtml(contentType: string, body: Buffer) {
+  const lowerType = contentType.toLowerCase();
+  if (lowerType.includes("text/html") || lowerType.includes("application/xhtml+xml")) {
+    return true;
+  }
+  if (!contentType) {
+    const sample = body.subarray(0, 512).toString("utf-8").trimStart();
+    const lowerSample = sample.toLowerCase();
+    return (
+      lowerSample.startsWith("<!doctype html") ||
+      lowerSample.startsWith("<html") ||
+      lowerSample.startsWith("<head") ||
+      lowerSample.startsWith("<meta")
+    );
+  }
+  return false;
 }
 
 async function canAccess(clientId: string, userId: string, isAdmin: boolean) {
@@ -201,6 +226,13 @@ async function handleProxy(
       "user-agent",
       "content-type",
       "content-length",
+      "authorization",
+      "cookie",
+      "origin",
+      "referer",
+      "x-requested-with",
+      "x-csrf-token",
+      "x-xsrf-token",
     ]);
     const forwardHeaders = Object.fromEntries(
       Array.from(req.headers.entries()).filter(([key]) =>
@@ -257,19 +289,30 @@ async function handleProxy(
   const contentType = getHeaderValue(upstreamHeaders, "content-type") ?? "";
   const contentEncoding = getHeaderValue(upstreamHeaders, "content-encoding");
   const upstreamSetCookies = getSetCookieValues(upstreamHeaders);
+  const upstreamLocation = getHeaderValue(upstreamHeaders, "location");
 
   let finalBody = responseBody;
   let dropContentEncoding = false;
-  if (contentType.includes("text/html") && responseBody.length > 0) {
-    const decoded = decodeHtmlBody(responseBody, contentEncoding);
-    dropContentEncoding = decoded.decoded;
-    const html = decoded.body.toString("utf-8");
-    const injectedHtml = injectBaseAndServiceWorker(html, {
-      baseHref: tunnelBaseHref,
-      clientId,
-      basePath,
-    });
-    finalBody = Buffer.from(injectedHtml, "utf-8");
+  let injected = false;
+  let htmlDetected = false;
+  let decoded = false;
+  let decodedEncoding = "";
+  if (responseBody.length > 0) {
+    const decodedResult = decodeHtmlBody(responseBody, contentEncoding);
+    decoded = decodedResult.decoded;
+    decodedEncoding = decodedResult.encoding;
+    if (looksLikeHtml(contentType, decodedResult.body)) {
+      htmlDetected = true;
+      dropContentEncoding = decodedResult.decoded;
+      const html = decodedResult.body.toString("utf-8");
+      const injectedHtml = injectBaseAndServiceWorker(html, {
+        baseHref: tunnelBaseHref,
+        clientId,
+        basePath,
+      });
+      injected = injectedHtml !== html;
+      finalBody = Buffer.from(injectedHtml, "utf-8");
+    }
   }
 
   const headers = new Headers();
@@ -281,6 +324,7 @@ async function handleProxy(
       lowerKey === "content-length" ||
       lowerKey === "content-security-policy" ||
       lowerKey === "content-security-policy-report-only" ||
+      lowerKey === "location" ||
       (dropContentEncoding && lowerKey === "content-encoding")
     ) {
       continue;
@@ -300,10 +344,33 @@ async function handleProxy(
     status: response.status ?? 200,
     headers,
   });
+  nextResponse.headers.set("x-webvpn-proxy", "1");
+  nextResponse.headers.set("x-webvpn-injected", injected ? "1" : "0");
+  nextResponse.headers.set("x-webvpn-html", htmlDetected ? "1" : "0");
+  nextResponse.headers.set(
+    "x-webvpn-encoding",
+    decodedEncoding || "none"
+  );
+  nextResponse.headers.set("x-webvpn-decoded", decoded ? "1" : "0");
+  nextResponse.headers.set("x-webvpn-body-len", String(finalBody.length));
 
   for (const cookie of upstreamSetCookies) {
     const rewritten = rewriteSetCookie(cookie, tunnelBasePath);
     nextResponse.headers.append("set-cookie", rewritten);
+  }
+
+  if (upstreamLocation) {
+    let rewrittenLocation = upstreamLocation;
+    try {
+      const absolute = new URL(upstreamLocation);
+      rewrittenLocation = absolute.pathname + absolute.search + absolute.hash;
+    } catch {
+      // keep as-is when relative
+    }
+    if (rewrittenLocation.startsWith("/")) {
+      rewrittenLocation = `${tunnelBasePath}${rewrittenLocation}`;
+    }
+    nextResponse.headers.set("location", rewrittenLocation);
   }
 
   return nextResponse;

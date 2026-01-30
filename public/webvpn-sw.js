@@ -8,6 +8,14 @@ const state = {
   activeClientId: "",
 };
 
+self.addEventListener("install", (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 function normalizeBasePath(value) {
   if (!value) return "";
   let base = String(value).trim();
@@ -68,7 +76,9 @@ self.addEventListener("message", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
-  if (requestUrl.origin !== self.location.origin) {
+  const isSameOrigin = requestUrl.origin === self.location.origin;
+  const isApiRequest = requestUrl.pathname.startsWith("/api/");
+  if (!isSameOrigin && !isApiRequest) {
     return;
   }
 
@@ -88,8 +98,53 @@ self.addEventListener("fetch", (event) => {
   }
 
   const tunnelPrefix = `${basePath}/tunnel/${clientId}`;
-  const rewrittenUrl = new URL(`${tunnelPrefix}${appPath}${requestUrl.search}`, requestUrl.origin);
+  const rewrittenUrl = new URL(
+    `${tunnelPrefix}${appPath}${requestUrl.search}`,
+    self.location.origin
+  );
 
-  const rewrittenRequest = new Request(rewrittenUrl.toString(), event.request);
-  event.respondWith(fetch(rewrittenRequest));
+  event.respondWith(
+    (async () => {
+      const method = event.request.method;
+      const init = {
+        method,
+        headers: event.request.headers,
+        mode: event.request.mode,
+        credentials: event.request.credentials,
+        cache: event.request.cache,
+        redirect: event.request.redirect,
+        referrer: event.request.referrer,
+        referrerPolicy: event.request.referrerPolicy,
+        integrity: event.request.integrity,
+        keepalive: event.request.keepalive,
+      };
+
+      if (method !== "GET" && method !== "HEAD") {
+        const body = await event.request.clone().arrayBuffer();
+        init.body = body;
+      }
+
+      try {
+        return await fetch(rewrittenUrl.toString(), init);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to fetch";
+        return new Response(
+          JSON.stringify(
+            {
+              error: message,
+              method,
+              originalUrl: event.request.url,
+              rewrittenUrl: rewrittenUrl.toString(),
+            },
+            null,
+            2
+          ),
+          {
+            status: 502,
+            headers: { "content-type": "application/json" },
+          }
+        );
+      }
+    })()
+  );
 });
