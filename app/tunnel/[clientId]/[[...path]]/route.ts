@@ -74,6 +74,19 @@ function escapeHtmlAttr(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
+function normalizeOrigin(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function getPublicOrigin(req: Request, url: URL) {
+  const configured = process.env.WEBVPN_PUBLIC_ORIGIN?.trim();
+  if (configured) return normalizeOrigin(configured);
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const host = forwardedHost ?? req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+  return host ? `${proto}://${host}` : url.origin;
+}
+
 function injectBaseAndServiceWorker(html: string, options: {
   baseHref: string;
   clientId: string;
@@ -256,30 +269,23 @@ async function handleProxy(
   { params }: { params: Promise<{ clientId: string; path?: string[] }> }
 ) {
   const { clientId, path: pathParts } = await params;
+  const url = new URL(req.url);
+  const publicOrigin = getPublicOrigin(req, url);
   const session = await requireSession();
   if (!session) {
     const accept = req.headers.get("accept") ?? "";
     if (accept.includes("text/html")) {
-      const forwardedHost = req.headers.get("x-forwarded-host");
-      const host = forwardedHost ?? req.headers.get("host");
-      const proto = req.headers.get("x-forwarded-proto") ?? "https";
-      const origin = host ? `${proto}://${host}` : req.url;
-      const url = new URL("/unauthorized", origin);
+      const redirectUrl = new URL("/unauthorized", publicOrigin);
       const pathName = new URL(req.url).pathname;
-      url.searchParams.set("from", pathName);
-      return NextResponse.redirect(url);
+      redirectUrl.searchParams.set("from", pathName);
+      return NextResponse.redirect(redirectUrl);
     }
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const url = new URL(req.url);
   const basePath = normalizeBasePath(
     req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
   );
-  const forwardedHost = req.headers.get("x-forwarded-host");
-  const host = forwardedHost ?? req.headers.get("host");
-  const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
-  const publicOrigin = host ? `${proto}://${host}` : url.origin;
   const fallbackClientId =
     extractClientIdFromReferer(req.headers.get("referer"), basePath) ||
     getCookieValue(req.headers.get("cookie"), "webvpn_tunnel");
@@ -292,7 +298,7 @@ async function handleProxy(
     const shiftedPathname = `/${shiftedSegments.join("/")}`;
     const redirectUrl = new URL(
       `${basePath}/tunnel/${fallbackClientId}${shiftedPathname}`,
-      req.url
+      publicOrigin
     );
     redirectUrl.search = url.search;
     return NextResponse.redirect(redirectUrl);
