@@ -28,6 +28,38 @@ function normalizeBasePath(value: string | null | undefined) {
   return basePath === "/" ? "" : basePath;
 }
 
+function stripBasePath(pathname: string, basePath: string) {
+  if (!basePath) return pathname;
+  if (pathname === basePath) return "/";
+  if (pathname.startsWith(`${basePath}/`)) {
+    return pathname.slice(basePath.length) || "/";
+  }
+  return pathname;
+}
+
+function getCookieValue(cookieHeader: string | null, name: string) {
+  if (!cookieHeader) return "";
+  const escaped = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function extractClientIdFromReferer(referer: string | null, basePath: string) {
+  if (!referer) return "";
+  try {
+    const url = new URL(referer);
+    const appPath = stripBasePath(url.pathname, basePath);
+    const match = appPath.match(/^\/tunnel\/([^/]+)(?:\/|$)/);
+    return match?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function looksLikeCuid(value: string) {
+  return /^c[a-z0-9]{24}$/i.test(value);
+}
+
 function applyClientBasePath(pathname: string, basePath: string) {
   if (!basePath) return pathname;
   if (pathname === "/" || pathname === "") return `${basePath}/`;
@@ -228,6 +260,28 @@ async function handleProxy(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const url = new URL(req.url);
+  const basePath = normalizeBasePath(
+    req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
+  );
+  const fallbackClientId =
+    extractClientIdFromReferer(req.headers.get("referer"), basePath) ||
+    getCookieValue(req.headers.get("cookie"), "webvpn_tunnel");
+  if (
+    fallbackClientId &&
+    fallbackClientId !== clientId &&
+    !looksLikeCuid(clientId)
+  ) {
+    const shiftedSegments = [clientId, ...(pathParts ?? [])].filter(Boolean);
+    const shiftedPathname = `/${shiftedSegments.join("/")}`;
+    const redirectUrl = new URL(
+      `${basePath}/tunnel/${fallbackClientId}${shiftedPathname}`,
+      req.url
+    );
+    redirectUrl.search = url.search;
+    return NextResponse.redirect(redirectUrl);
+  }
+
   const canViewAll =
     session.user?.permissions?.includes("admin.users") ||
     session.user?.permissions?.includes("clients.manage");
@@ -247,11 +301,7 @@ async function handleProxy(
 
   const rawBody = await req.arrayBuffer();
   const body = Buffer.from(rawBody).toString("base64");
-  const url = new URL(req.url);
   const rawPathname = `/${pathParts?.join("/") ?? ""}`;
-  const basePath = normalizeBasePath(
-    req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
-  );
   const tunnelBasePath = `${basePath}/tunnel/${clientId}`;
   const tunnelBaseHref = `${tunnelBasePath}/`;
   const clientBasePath = normalizeBasePath(client.basePath);
