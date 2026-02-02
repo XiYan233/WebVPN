@@ -122,6 +122,18 @@ function injectBaseAndServiceWorker(html: string, options: {
   return `${injection}${html}`;
 }
 
+function ensureTrailingSlash(value: string) {
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+function rewriteLocalOrigins(html: string, targetBaseUrl: string) {
+  const target = ensureTrailingSlash(targetBaseUrl);
+  return html
+    .replace(/https?:\/\/localhost:3000\/?/gi, target)
+    .replace(/https?:\/\/127\.0\.0\.1:3000\/?/gi, target)
+    .replace(/https?:\/\/192\.168\.0\.\d{1,3}:3000\/?/gi, target);
+}
+
 function getHeaderValue(headers: UpstreamHeaders, name: string) {
   const lower = name.toLowerCase();
   const value = headers[name] ?? headers[lower];
@@ -264,6 +276,10 @@ async function handleProxy(
   const basePath = normalizeBasePath(
     req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
   );
+  const forwardedHost = req.headers.get("x-forwarded-host");
+  const host = forwardedHost ?? req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") ?? url.protocol.replace(":", "");
+  const publicOrigin = host ? `${proto}://${host}` : url.origin;
   const fallbackClientId =
     extractClientIdFromReferer(req.headers.get("referer"), basePath) ||
     getCookieValue(req.headers.get("cookie"), "webvpn_tunnel");
@@ -304,9 +320,15 @@ async function handleProxy(
   const rawPathname = `/${pathParts?.join("/") ?? ""}`;
   const tunnelBasePath = `${basePath}/tunnel/${clientId}`;
   const tunnelBaseHref = `${tunnelBasePath}/`;
+  const tunnelPublicBaseUrl = `${publicOrigin}${tunnelBasePath}/`;
   const clientBasePath = normalizeBasePath(client.basePath);
   const upstreamPathname = applyClientBasePath(rawPathname, clientBasePath);
   const path = `${upstreamPathname}${url.search}`;
+  const fallbackPath = `${rawPathname}${url.search}`;
+  const appliedBasePath = Boolean(clientBasePath) && upstreamPathname !== rawPathname;
+  const canRetryWithoutBasePath =
+    appliedBasePath && (req.method === "GET" || req.method === "HEAD");
+  let finalPath = path;
 
   let response;
   try {
@@ -348,6 +370,23 @@ async function handleProxy(
       },
       30000
     );
+
+    if (response && !response.error && response.status === 404 && canRetryWithoutBasePath) {
+      const fallbackResponse = await createProxyRequest(
+        clientId,
+        {
+          method: req.method,
+          path: fallbackPath,
+          headers: forwardHeaders,
+          body,
+        },
+        30000
+      );
+      if (fallbackResponse && !fallbackResponse.error && fallbackResponse.status !== 404) {
+        response = fallbackResponse;
+        finalPath = fallbackPath;
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Proxy error";
     const status = message === "Proxy timeout" ? 504 : 502;
@@ -371,7 +410,7 @@ async function handleProxy(
       clientId,
       userId: userId,
       method: req.method,
-      path,
+      path: finalPath,
       status: response.status ?? 200,
       ip: req.headers.get("x-forwarded-for") ?? "",
     },
@@ -403,12 +442,13 @@ async function handleProxy(
       htmlDetected = true;
       dropContentEncoding = decodedResult.decoded;
       const html = decodedResult.body.toString("utf-8");
-      const injectedHtml = injectBaseAndServiceWorker(html, {
+      const rewrittenHtml = rewriteLocalOrigins(html, tunnelPublicBaseUrl);
+      const injectedHtml = injectBaseAndServiceWorker(rewrittenHtml, {
         baseHref: tunnelBaseHref,
         clientId,
         basePath,
       });
-      injected = injectedHtml !== html;
+      injected = injectedHtml !== rewrittenHtml;
       finalBody = Buffer.from(injectedHtml, "utf-8");
     }
   }
