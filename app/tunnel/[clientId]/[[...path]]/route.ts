@@ -28,6 +28,16 @@ function normalizeBasePath(value: string | null | undefined) {
   return basePath === "/" ? "" : basePath;
 }
 
+function applyClientBasePath(pathname: string, basePath: string) {
+  if (!basePath) return pathname;
+  if (pathname === "/" || pathname === "") return `${basePath}/`;
+  if (pathname === basePath || pathname.startsWith(`${basePath}/`)) {
+    return pathname;
+  }
+  if (pathname.startsWith("/")) return `${basePath}${pathname}`;
+  return `${basePath}/${pathname}`;
+}
+
 function escapeHtmlAttr(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
@@ -238,12 +248,15 @@ async function handleProxy(
   const rawBody = await req.arrayBuffer();
   const body = Buffer.from(rawBody).toString("base64");
   const url = new URL(req.url);
-  const path = `/${pathParts?.join("/") ?? ""}${url.search}`;
+  const rawPathname = `/${pathParts?.join("/") ?? ""}`;
   const basePath = normalizeBasePath(
     req.headers.get("x-forwarded-prefix") ?? process.env.NEXT_PUBLIC_BASE_PATH
   );
   const tunnelBasePath = `${basePath}/tunnel/${clientId}`;
   const tunnelBaseHref = `${tunnelBasePath}/`;
+  const clientBasePath = normalizeBasePath(client.basePath);
+  const upstreamPathname = applyClientBasePath(rawPathname, clientBasePath);
+  const path = `${upstreamPathname}${url.search}`;
 
   let response;
   try {
